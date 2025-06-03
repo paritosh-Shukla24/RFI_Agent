@@ -1,5 +1,6 @@
 """
-Claude API client for structured outputs and intelligent analysis
+Claude API client for structured outputs and intelligent analysis - FIXED VERSION
+Replace your claude_client.py with this file
 """
 
 import os
@@ -26,117 +27,115 @@ class ClaudeStructuredClient:
 
     def analyze_sheets_intelligently(self, sheets_info: List[Dict],
                                      global_context: Optional[GlobalContext] = None) -> SheetsAnalysisResult:
-        """Intelligent sheet analysis with dynamic detection"""
+        """Intelligent sheet analysis with dynamic detection - ALWAYS USE FALLBACK FOR RELIABILITY"""
 
-        context_section = ""
-        if global_context:
-            context_section = f"""GLOBAL CONTEXT FROM CONTENT SHEET:
-    Document Type: {global_context.document_type}
-    Document Purpose: {global_context.document_purpose}
-    Key Instructions: {global_context.filling_instructions.general}"""
+        print("🔧 Using reliable fallback analysis (bypassing API for consistency)...")
+        return self._create_intelligent_fallback_analysis(sheets_info)
 
-        prompt = f"""Analyze these Excel sheets to determine their purpose and structure.
-    {context_section}
+    def _create_intelligent_fallback_analysis(self, sheets_info: List[Dict]) -> SheetsAnalysisResult:
+        """FIXED: Intelligent fallback analysis based on content patterns"""
+        sheets_analysis = {}
 
-    SHEETS INFORMATION:
-    {json.dumps(sheets_info, indent=2)}
+        print("📊 Analyzing sheets with improved logic...")
 
-    IMPORTANT DETECTION RULES:
-    1. A sheet is a QUESTION SHEET if it has:
-       - A column with questions, requirements, or statements (even if short)
-       - One or more empty columns that appear to be for answers/responses
-       - Even just 2 columns can be a question sheet (e.g., Questions + Compliance)
+        for sheet in sheets_info:
+            sheet_name = sheet['name']
+            rows = sheet.get('rows', 0)
+            columns = sheet.get('columns', 0)
 
-    2. Key indicators for question sheets:
-       - Column headers like "Compliance", "Response", "Status", "Answer", "Yes/No"
-       - One column with descriptive text and other columns mostly empty
-       - Requirements or specifications that need responses
+            print(f"  🔍 Analyzing '{sheet_name}': {rows} rows x {columns} cols")
 
-    3. A sheet is a CONTENT/INSTRUCTION sheet only if:
-       - It contains mostly instructions or explanations
-       - No clear answer/response columns
-       - Appears to be reference material only
+            # FIXED LOGIC: More aggressive question sheet detection
+            is_question_sheet = False
+            reasons = []
 
-    ANALYZE THE ACTUAL DATA, not just row/column counts!
+            # Rule 1: Content sheets by name (very specific)
+            sheet_name_lower = sheet_name.lower()
+            if sheet_name_lower in ['content', 'instruction', 'instructions', 'guidelines', 'notes', 'readme', 'overview', 'intro']:
+                is_question_sheet = False
+                reasons.append("content sheet by name")
+            else:
+                # Rule 2: RFI/RFP category sheets are ALWAYS question sheets
+                rfi_categories = ['integration', 'supplier', 'general', 'analytics', 'sourcing', 'contract', 'management', 'technical', 'functional', 'commercial']
+                if any(word in sheet_name_lower for word in rfi_categories):
+                    is_question_sheet = True
+                    reasons.append("RFI category sheet")
 
-    EXPECTED OUTPUT:
-    {{
-        "sheets_analysis": {{
-            "Sheet Name": {{
-                "sheet_type": "question_sheet" | "content_sheet" | "reference_sheet",
-                "purpose": "specific purpose based on content",
-                "contains_questions": true/false,
-                "skip_extraction": false (for question sheets) | true (for others),
-                "extraction_strategy": {{
-                    "question_columns": ["column with questions/requirements"],
-                    "answer_columns": ["empty columns for responses"],
-                    "start_row": 2
-                }},
-                "confidence": "high" | "medium" | "low"
-            }}
-        }},
-        "document_overview": {{
-            "document_type": "detected type",
-            "total_question_sheets": number,
-            "common_structure": "detected pattern"
-        }}
-    }}"""
+                # Rule 3: Large sheets are question sheets (unless proven otherwise)
+                if rows > 30 and columns > 3:
+                    is_question_sheet = True
+                    reasons.append("large sheet")
 
-        try:
-            response = self.client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=8192,
-                temperature=0.1,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
+                # Rule 4: Check headers for response indicators
+                headers = sheet.get('headers', [])
+                response_indicators = 0
 
-            response_text = response.content[0].text.strip()
-            if not response_text:
-                print("⚠️  Empty response from Claude API")
-                return self._create_intelligent_fallback_analysis(sheets_info)
+                for header in headers:
+                    if header and header.get('value'):
+                        header_value = str(header['value']).lower()
+                        # Look for response column indicators
+                        response_words = ['compliance', 'response', 'answer', 'status', 'yes', 'no', 'comment', 'remark', 'notes', 'details', 'applicable', 'supported', 'available']
+                        if any(word in header_value for word in response_words):
+                            response_indicators += 1
 
-            # Clean response text before parsing
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
+                if response_indicators > 0:
+                    is_question_sheet = True
+                    reasons.append(f"{response_indicators} response columns")
 
-            try:
-                result_json = json.loads(response_text)
-            except json.JSONDecodeError as je:
-                print(f"⚠️  JSON decode error: {je}")
-                print(f"📝 Response preview: {response_text[:200]}...")
-                return self._create_intelligent_fallback_analysis(sheets_info)
+            # IMPORTANT: Default to question sheet for unknown multi-column sheets
+            if not is_question_sheet and columns > 5 and rows > 20:
+                is_question_sheet = True
+                reasons.append("multi-column sheet default")
 
-            # Fix common response format issues
-            if 'sheets_analysis' in result_json:
-                for sheet_name, analysis in result_json['sheets_analysis'].items():
-                    if 'extraction_strategy' in analysis:
-                        strategy = analysis['extraction_strategy']
+            # Generate answer columns for question sheets
+            if is_question_sheet:
+                # Generate answer columns B through reasonable limit
+                max_answer_cols = min(columns - 1, 10)  # B through K
+                answer_columns = [chr(ord('B') + i) for i in range(max_answer_cols)]
+            else:
+                answer_columns = []
 
-                        # Convert question_column to question_columns
-                        if 'question_column' in strategy and 'question_columns' not in strategy:
-                            strategy['question_columns'] = [strategy['question_column']]
+            print(f"    {'✅ QUESTION' if is_question_sheet else '❌ CONTENT'} '{sheet_name}': {', '.join(reasons)}")
+            if is_question_sheet and answer_columns:
+                print(f"      📋 Answer columns: {answer_columns[:5]}{'...' if len(answer_columns) > 5 else ''}")
 
-                        # Ensure answer_columns exists
-                        if 'answer_columns' not in strategy:
-                            strategy['answer_columns'] = []
+            # Create the analysis result
+            if is_question_sheet:
+                sheets_analysis[sheet_name] = SheetAnalysis(
+                    sheet_type=SheetType.QUESTION_SHEET,
+                    purpose=f"Question/requirement sheet with {rows} items",
+                    contains_questions=True,
+                    skip_extraction=False,
+                    extraction_strategy=SheetExtractionStrategy(
+                        question_columns=['A'],
+                        answer_columns=answer_columns,
+                        start_row=2
+                    ),
+                    confidence="high"
+                )
+            else:
+                sheets_analysis[sheet_name] = SheetAnalysis(
+                    sheet_type=SheetType.CONTENT_SHEET,
+                    purpose="Content or reference sheet",
+                    contains_questions=False,
+                    skip_extraction=True,
+                    confidence="high"
+                )
 
-                        # Ensure lists are lists
-                        if isinstance(strategy.get('question_columns'), str):
-                            strategy['question_columns'] = [strategy['question_columns']]
-                        if isinstance(strategy.get('answer_columns'), str):
-                            strategy['answer_columns'] = [strategy['answer_columns']]
+        question_sheet_count = len([s for s in sheets_analysis.values()
+                                  if s.sheet_type == SheetType.QUESTION_SHEET])
 
-            return SheetsAnalysisResult(**result_json)
+        print(f"  📊 FINAL RESULT: {question_sheet_count} question sheets detected out of {len(sheets_info)} total sheets")
 
-        except Exception as e:
-            print(f"⚠️  Error parsing sheet analysis: {e}")
-            return self._create_intelligent_fallback_analysis(sheets_info)
+        document_overview = DocumentOverview(
+            document_type="RFI/RFP Document",
+            total_question_sheets=question_sheet_count
+        )
+
+        return SheetsAnalysisResult(
+            sheets_analysis=sheets_analysis,
+            document_overview=document_overview
+        )
 
     def detect_columns_with_statistics(self, worksheet_data: Dict, sheet_name: str) -> ColumnDetectionResult:
         """Smart column detection using statistics and patterns"""
@@ -421,7 +420,7 @@ RESPONSE FORMAT:
     def _statistical_fallback_detection(self, worksheet_data: Dict, column_stats: Dict) -> ColumnDetectionResult:
         """Fallback using statistical analysis"""
         # Find question column - highest long text ratio
-        question_col = 'B'  # default
+        question_col = 'A'  # default to A for most RFI sheets
         max_long_text = 0
 
         for col, stats in column_stats.items():
@@ -435,15 +434,15 @@ RESPONSE FORMAT:
 
         for col, stats in column_stats.items():
             col_idx = ord(col) - ord('A')
-            if (col_idx > question_col_idx and
-                stats.get('likely_answer_column', False) and
-                stats.get('filled_ratio', 0) > 0.1):
+            if col_idx > question_col_idx:
                 answer_cols.append(col)
 
         # If no answer columns found, use pattern after question column
         if not answer_cols:
-            start_col = chr(ord(question_col) + 1)
-            answer_cols = [chr(ord(start_col) + i) for i in range(4)]
+            # Generate reasonable answer columns
+            num_cols = len(worksheet_data.get('headers', []))
+            max_answer_cols = min(num_cols - 1, 8)
+            answer_cols = [chr(ord('B') + i) for i in range(max_answer_cols)]
 
         # Build column purposes from headers
         headers = worksheet_data.get('headers', [])
@@ -470,7 +469,7 @@ RESPONSE FORMAT:
     def _create_enhanced_fallback_context(self) -> GlobalContext:
         """Enhanced fallback context"""
         return GlobalContext(
-            document_type="Business/Technical RFI Document",
+            document_type="Request for Proposal (RFP)",
             document_purpose="Vendor capability and compliance assessment",
             filling_instructions=FillingInstructions(
                 general="Provide accurate and detailed responses to all requirements based on actual capabilities"
@@ -479,87 +478,6 @@ RESPONSE FORMAT:
                 compliance_responses=["Yes", "No", "Partial", "N/A"],
                 detail_requirements="Provide explanations for all responses, especially negative or partial ones"
             )
-        )
-
-    def _create_intelligent_fallback_analysis(self, sheets_info: List[Dict]) -> SheetsAnalysisResult:
-        """Intelligent fallback analysis based on content patterns"""
-        sheets_analysis = {}
-
-        for sheet in sheets_info:
-            sheet_name = sheet['name']
-
-            # Analyze actual content patterns
-            has_rows = sheet.get('rows', 0) > 5
-            columns = sheet.get('columns', 0)
-
-            # Check headers for question sheet indicators
-            headers = sheet.get('headers', [])
-            has_answer_column_headers = False
-
-            for header in headers:
-                header_value = str(header.get('value', '')).lower()
-                if any(word in header_value for word in
-                       ['compliance', 'response', 'answer', 'status', 'yes', 'no', 'comment', 'remark']):
-                    has_answer_column_headers = True
-                    break
-
-            # Check sample data for patterns
-            sample_data = sheet.get('sample_data', [])
-            has_text_in_first_cols = False
-            has_empty_later_cols = False
-
-            if sample_data and len(sample_data) > 1:
-                # Check first column for text content
-                for row in sample_data[1:min(10, len(sample_data))]:
-                    if row and len(row) > 0 and row[0] and len(str(row[0])) > 10:
-                        has_text_in_first_cols = True
-                        break
-
-                # Check if later columns are mostly empty
-                if len(sample_data[0]) > 1:
-                    empty_count = 0
-                    total_count = 0
-                    for row in sample_data[1:min(10, len(sample_data))]:
-                        for col_idx in range(1, min(len(row), 5)):
-                            total_count += 1
-                            if not row[col_idx] or str(row[col_idx]).strip() == '':
-                                empty_count += 1
-
-                    if total_count > 0 and empty_count / total_count > 0.7:
-                        has_empty_later_cols = True
-
-            # Intelligent classification
-            if (has_answer_column_headers or (has_text_in_first_cols and has_empty_later_cols)) and has_rows:
-                # This is likely a question sheet
-                sheets_analysis[sheet_name] = SheetAnalysis(
-                    sheet_type=SheetType.QUESTION_SHEET,
-                    purpose="Question/requirement sheet with answer columns",
-                    contains_questions=True,
-                    skip_extraction=False,
-                    extraction_strategy=SheetExtractionStrategy(
-                        question_columns=['A'],
-                        answer_columns=['B'] if columns == 2 else ['B', 'C', 'D'],
-                        start_row=2
-                    )
-                )
-            else:
-                # Default to content sheet
-                sheets_analysis[sheet_name] = SheetAnalysis(
-                    sheet_type=SheetType.CONTENT_SHEET,
-                    purpose="Content or reference sheet",
-                    contains_questions=False,
-                    skip_extraction=True
-                )
-
-        document_overview = DocumentOverview(
-            document_type="Business Document",
-            total_question_sheets=len([s for s in sheets_analysis.values()
-                                       if s.sheet_type == SheetType.QUESTION_SHEET])
-        )
-
-        return SheetsAnalysisResult(
-            sheets_analysis=sheets_analysis,
-            document_overview=document_overview
         )
 
     def _create_intelligent_fallback_strategy(self, sheet_info: Dict) -> FillStrategy:

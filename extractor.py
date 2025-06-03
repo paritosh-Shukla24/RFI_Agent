@@ -1,5 +1,5 @@
 """
-Enhanced Excel extractor with intelligent detection and dynamic analysis
+Enhanced Excel extractor with intelligent detection and dynamic analysis - CLEAN VERSION
 """
 
 import os
@@ -34,7 +34,7 @@ class EnhancedExcelExtractor:
             value = sheet.cell(row=1, column=col).value
             headers.append({
                 'column': openpyxl.utils.get_column_letter(col),
-                'value': str(value) if value else ""
+                'value': str(value) if value is not None else ""
             })
         return headers
 
@@ -45,7 +45,7 @@ class EnhancedExcelExtractor:
             row_data = []
             for col in range(1, min(26, sheet.max_column + 1)):
                 value = sheet.cell(row=row, column=col).value
-                row_data.append(str(value)[:200] if value else "")
+                row_data.append(str(value)[:200] if value is not None else "")
             samples.append(row_data)
         return samples
 
@@ -130,8 +130,15 @@ class EnhancedExcelExtractor:
 
             for sheet_name in self.workbook.sheetnames:
                 sheet = self.workbook[sheet_name]
+                sheet_name_lower = sheet_name.lower()
 
-                # Analyze content patterns
+                # Check by name first
+                if any(word in sheet_name_lower for word in ['content', 'instruction', 'guideline', 'overview', 'intro']):
+                    content_sheets.append(sheet_name)
+                    print(f"  📄 Detected content sheet by name: '{sheet_name}'")
+                    continue
+
+                # Analyze content patterns for other indicators
                 instruction_indicators = 0
                 question_indicators = 0
 
@@ -143,17 +150,20 @@ class EnhancedExcelExtractor:
                             text = str(cell_value).lower()
 
                             # Instruction indicators
-                            if any(word in text for word in ['instruction', 'fill', 'complete', 'respond', 'answer', 'guideline', 'note']):
+                            if any(word in text for word in ['instruction', 'fill', 'complete', 'respond', 'answer', 'guideline', 'note', 'overview', 'introduction']):
                                 instruction_indicators += 1
 
-                            # Question indicators
+                            # Question indicators (actual questions, not instructions)
                             if len(text) > 50 and ('?' in text or any(word in text for word in ['requirement', 'must', 'shall', 'provide', 'describe'])):
                                 question_indicators += 1
 
-                # Classify based on indicators
-                if instruction_indicators > question_indicators and instruction_indicators > 2:
+                # Only classify as content sheet if clearly has more instructions than questions
+                # AND it's a smaller sheet (content sheets are usually smaller)
+                if (instruction_indicators > question_indicators and
+                    instruction_indicators > 3 and
+                    sheet.max_row < 100):
                     content_sheets.append(sheet_name)
-                    print(f"  📄 Detected content sheet: '{sheet_name}' (instruction indicators: {instruction_indicators})")
+                    print(f"  📄 Detected content sheet by content: '{sheet_name}' (instruction indicators: {instruction_indicators})")
 
         if content_sheets:
             # Use the first detected content sheet
@@ -191,7 +201,7 @@ class EnhancedExcelExtractor:
             sheets_info.append(info)
             print(f"  📋 '{sheet_name}': {sheet.max_row} rows, {sheet.max_column} columns")
 
-        # Use intelligent analysis
+        # Use intelligent analysis - CLEAN CALL
         analysis_result = self.claude_client.analyze_sheets_intelligently(sheets_info, self.global_context)
 
         print("📊 Sheet Analysis Results:")

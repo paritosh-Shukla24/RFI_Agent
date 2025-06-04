@@ -1,5 +1,5 @@
 """
-Enhanced Excel extractor with intelligent detection and dynamic analysis - CLEAN VERSION
+Enhanced Excel extractor with LLM-based intelligent sheet detection
 """
 
 import os
@@ -13,19 +13,22 @@ from models import (
 )
 from claude_client import ClaudeStructuredClient
 from parsers import HierarchicalQuestionParser, MultiLineQuestionParser
+from smart_sheet_analyzer import SmartSheetAnalyzer
 
 
 class EnhancedExcelExtractor:
-    """Enhanced extractor with intelligent detection and dynamic analysis"""
+    """Enhanced extractor with LLM-based intelligent detection"""
 
     def __init__(self, file_path: str, use_llm_hierarchy=True, content_sheet_name=None):
         self.use_llm_hierarchy = use_llm_hierarchy
         self.file_path = file_path
         self.workbook = None
         self.claude_client = ClaudeStructuredClient()
+        self.smart_analyzer = SmartSheetAnalyzer(self.claude_client)
         self.hierarchy_parser = HierarchicalQuestionParser() if use_llm_hierarchy else None
         self.global_context = None
         self.content_sheet_name = content_sheet_name
+        self.detected_content_sheet = None
 
     def _get_headers(self, sheet) -> List[Dict[str, str]]:
         """Get sheet headers"""
@@ -82,24 +85,22 @@ class EnhancedExcelExtractor:
         return data
 
     def extract_all(self) -> Dict[str, Any]:
-        """Extract questions from all sheets with intelligent analysis"""
+        """Extract questions from all sheets with LLM-based intelligent analysis"""
         print(f"🚀 Enhanced Excel Extraction: {self.file_path}")
         print("=" * 60)
 
         # Load workbook
         self.workbook = openpyxl.load_workbook(self.file_path, data_only=True)
         print(f"📊 Loaded workbook with {len(self.workbook.sheetnames)} sheets")
-
-        # Show all sheet names for transparency
         print(f"📋 Available sheets: {self.workbook.sheetnames}")
 
-        # Extract global context using intelligent detection
-        self._extract_global_context_intelligently()
+        # STEP 1: LLM-based sheet analysis (determines content vs question sheets)
+        sheet_analysis = self._analyze_sheets_with_llm()
 
-        # Analyze all sheets intelligently
-        sheet_analysis = self._analyze_sheets_intelligently()
+        # STEP 2: Extract global context from detected content sheet
+        self._extract_global_context_from_detected_sheet()
 
-        # Extract questions from each sheet
+        # STEP 3: Extract questions from question sheets
         results = {}
         for sheet_name, analysis in sheet_analysis.sheets_analysis.items():
             if not analysis.skip_extraction:
@@ -114,80 +115,12 @@ class EnhancedExcelExtractor:
             'timestamp': datetime.now().isoformat()
         }
 
-    def _extract_global_context_intelligently(self):
-        """Intelligent global context extraction"""
-        print("\n📖 Step 1: Intelligent Global Context Extraction")
+    def _analyze_sheets_with_llm(self):
+        """LLM-based intelligent sheet analysis"""
+        print("\n📊 Step 1: LLM-Based Intelligent Sheet Analysis")
+        print("🧠 Analyzing actual content patterns to classify sheets...")
 
-        content_sheets = []
-
-        # Check if manual content sheet specified
-        if self.content_sheet_name and self.content_sheet_name in self.workbook.sheetnames:
-            content_sheets = [self.content_sheet_name]
-            print(f"📚 Using manually specified content sheet: {self.content_sheet_name}")
-        else:
-            # Intelligent content sheet detection - analyze all sheets
-            print("🔍 Analyzing all sheets to find content/instruction sheets...")
-
-            for sheet_name in self.workbook.sheetnames:
-                sheet = self.workbook[sheet_name]
-                sheet_name_lower = sheet_name.lower()
-
-                # Check by name first
-                if any(word in sheet_name_lower for word in ['content', 'instruction', 'guideline', 'overview', 'intro']):
-                    content_sheets.append(sheet_name)
-                    print(f"  📄 Detected content sheet by name: '{sheet_name}'")
-                    continue
-
-                # Analyze content patterns for other indicators
-                instruction_indicators = 0
-                question_indicators = 0
-
-                # Check first 20 rows for patterns
-                for row in range(1, min(21, sheet.max_row + 1)):
-                    for col in range(1, min(6, sheet.max_column + 1)):
-                        cell_value = sheet.cell(row=row, column=col).value
-                        if cell_value:
-                            text = str(cell_value).lower()
-
-                            # Instruction indicators
-                            if any(word in text for word in ['instruction', 'fill', 'complete', 'respond', 'answer', 'guideline', 'note', 'overview', 'introduction']):
-                                instruction_indicators += 1
-
-                            # Question indicators (actual questions, not instructions)
-                            if len(text) > 50 and ('?' in text or any(word in text for word in ['requirement', 'must', 'shall', 'provide', 'describe'])):
-                                question_indicators += 1
-
-                # Only classify as content sheet if clearly has more instructions than questions
-                # AND it's a smaller sheet (content sheets are usually smaller)
-                if (instruction_indicators > question_indicators and
-                    instruction_indicators > 3 and
-                    sheet.max_row < 100):
-                    content_sheets.append(sheet_name)
-                    print(f"  📄 Detected content sheet by content: '{sheet_name}' (instruction indicators: {instruction_indicators})")
-
-        if content_sheets:
-            # Use the first detected content sheet
-            sheet = self.workbook[content_sheets[0]]
-            content_data = self._collect_sheet_data(sheet)
-            self.global_context = self.claude_client.extract_global_context(content_data)
-            print(f"✅ Extracted context from: {content_sheets[0]}")
-            print(f"📚 Document Type: {self.global_context.document_type}")
-        else:
-            print("⚠️  No dedicated content sheet detected")
-            # Use first sheet for basic context
-            if self.workbook.sheetnames:
-                first_sheet = self.workbook[self.workbook.sheetnames[0]]
-                content_data = self._collect_sheet_data(first_sheet)
-                self.global_context = self.claude_client.extract_global_context(content_data)
-                print(f"📚 Using first sheet for context: {self.workbook.sheetnames[0]}")
-            else:
-                self.global_context = self.claude_client._create_enhanced_fallback_context()
-                print("📚 Using fallback context")
-
-    def _analyze_sheets_intelligently(self):
-        """Intelligent sheet analysis using content patterns"""
-        print("\n📊 Step 2: Intelligent Sheet Analysis")
-
+        # Collect data from all sheets
         sheets_info = []
         for sheet_name in self.workbook.sheetnames:
             sheet = self.workbook[sheet_name]
@@ -201,14 +134,49 @@ class EnhancedExcelExtractor:
             sheets_info.append(info)
             print(f"  📋 '{sheet_name}': {sheet.max_row} rows, {sheet.max_column} columns")
 
-        # Use intelligent analysis - CLEAN CALL
-        analysis_result = self.claude_client.analyze_sheets_intelligently(sheets_info, self.global_context)
+        # Use LLM-based analysis
+        analysis_result, detected_content_sheet = self.smart_analyzer.analyze_all_sheets_with_llm(sheets_info)
 
-        print("📊 Sheet Analysis Results:")
+        # Store detected content sheet for later use
+        self.detected_content_sheet = detected_content_sheet
+
+        print("\n📊 Final Sheet Classification:")
         for sheet_name, analysis in analysis_result.sheets_analysis.items():
             print(f"  📄 '{sheet_name}': {analysis.sheet_type.value} - Questions: {analysis.contains_questions}")
 
         return analysis_result
+
+    def _extract_global_context_from_detected_sheet(self):
+        """Extract global context from LLM-detected content sheet"""
+        print(f"\n📖 Step 2: Global Context Extraction")
+
+        content_sheet_to_use = None
+
+        # Priority 1: Manual override
+        if self.content_sheet_name and self.content_sheet_name in self.workbook.sheetnames:
+            content_sheet_to_use = self.content_sheet_name
+            print(f"📚 Using manually specified content sheet: {self.content_sheet_name}")
+
+        # Priority 2: LLM-detected content sheet
+        elif self.detected_content_sheet and self.detected_content_sheet in self.workbook.sheetnames:
+            content_sheet_to_use = self.detected_content_sheet
+            print(f"🧠 Using LLM-detected content sheet: {self.detected_content_sheet}")
+
+        # Priority 3: First sheet fallback
+        elif self.workbook.sheetnames:
+            content_sheet_to_use = self.workbook.sheetnames[0]
+            print(f"⚠️  No content sheet detected, using first sheet: {content_sheet_to_use}")
+
+        # Extract context from selected sheet
+        if content_sheet_to_use:
+            sheet = self.workbook[content_sheet_to_use]
+            content_data = self._collect_sheet_data(sheet)
+            self.global_context = self.claude_client.extract_global_context(content_data)
+            print(f"✅ Global context extracted successfully")
+            print(f"📚 Document Type: {self.global_context.document_type}")
+        else:
+            self.global_context = self.claude_client._create_enhanced_fallback_context()
+            print("📚 Using fallback global context")
 
     def _extract_from_sheet_enhanced(self, sheet_name: str, analysis) -> Optional[ExtractionResult]:
         """Enhanced extraction from a single sheet"""

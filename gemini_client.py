@@ -1,6 +1,6 @@
 """
-Gemini API client compatible with older google-generativeai versions
-Uses GenerativeModel instead of the new Client class
+Clean Gemini API client - completely removed all schema references
+Uses proper model names and simple JSON prompt engineering
 """
 
 import os
@@ -10,14 +10,14 @@ from typing import Dict, List, Any, Optional
 
 from models import (
     SheetsAnalysisResult, SheetAnalysis, SheetType, DocumentOverview,
-    ColumnDetectionResult, HierarchicalPattern, GlobalContext,
+    ColumnDetectionResult, GlobalContext,
     FillingInstructions, AnswerGuidelines, FillStrategy, FillDistribution,
     ColumnFillStrategy, SheetExtractionStrategy
 )
 
 
 class GeminiStructuredClient:
-    """Gemini client compatible with older google-generativeai versions"""
+    """Clean Gemini client with no schema references"""
 
     def __init__(self):
         api_key = os.getenv('GEMINI_API_KEY')
@@ -25,11 +25,12 @@ class GeminiStructuredClient:
             raise ValueError("GEMINI_API_KEY environment variable is required")
 
         genai.configure(api_key=api_key)
+        # Use the correct model name from search results
         self.model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
 
-        # Configure generation settings for better structured output
-        self.generation_config = genai.types.GenerationConfig(
-            temperature=0,
+        # Simple generation config
+        self.generation_config = genai.GenerationConfig(
+            temperature=0.1,
             max_output_tokens=8192,
             candidate_count=1
         )
@@ -73,8 +74,7 @@ class GeminiStructuredClient:
                 "name": sheet['name'],
                 "dimensions": f"{sheet.get('rows', 0)} rows x {sheet.get('columns', 0)} columns",
                 "headers": [],
-                "sample_content": [],
-                "content_analysis": {}
+                "sample_content": []
             }
 
             # Extract headers (first 8 for analysis)
@@ -100,18 +100,6 @@ class GeminiStructuredClient:
                                     row_content.append(content)
                         if row_content:
                             sheet_data["sample_content"].append(row_content)
-
-            # Basic content analysis
-            all_text = ' '.join([
-                ' '.join(h.get('header', '') for h in sheet_data["headers"]),
-                ' '.join([' '.join(row) for row in sheet_data["sample_content"]])
-            ]).lower()
-
-            sheet_data["content_analysis"] = {
-                "total_text_length": len(all_text),
-                "appears_structured": len(sheet_data["headers"]) > 3 and len(sheet_data["sample_content"]) > 2,
-                "has_empty_columns": any('header' in h and len(h['header']) < 10 for h in sheet_data["headers"][-3:]) if sheet_data["headers"] else False
-            }
 
             analysis_data["sheets"].append(sheet_data)
 
@@ -157,19 +145,18 @@ ANALYSIS PRINCIPLES:
 - Look at headers, sample content, and overall organization
 - Identify which sheet would serve as the instruction/context source
 
-IMPORTANT: Respond with ONLY valid JSON, no other text or formatting.
-
+RESPONSE FORMAT - Return ONLY this JSON structure:
 {{
-    "content_sheet_detected": "SheetName" or null,
+    "content_sheet_detected": "SheetName or null",
     "classification_reasoning": "explanation of analysis approach",
     "sheets_analysis": {{
         "SheetName": {{
-            "sheet_type": "content_sheet" | "question_sheet",
+            "sheet_type": "content_sheet or question_sheet",
             "purpose": "specific purpose based on content analysis",
             "contains_questions": true/false,
             "skip_extraction": true/false,
             "reasoning": "detailed reasoning for this classification",
-            "confidence": "high" | "medium" | "low",
+            "confidence": "high/medium/low",
             "extraction_strategy": {{
                 "question_columns": ["A"],
                 "answer_columns": ["B", "C"],
@@ -189,11 +176,18 @@ IMPORTANT: Respond with ONLY valid JSON, no other text or formatting.
                 generation_config=self.generation_config
             )
 
+            # Parse the JSON response
             response_text = response.text.strip()
 
-            # Clean and parse response
-            response_text = self._clean_json_response(response_text)
-            result = json.loads(response_text)
+            # Clean response
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+
+            result = json.loads(response_text.strip())
 
             # Convert to our models
             sheets_analysis = {}
@@ -243,8 +237,6 @@ IMPORTANT: Respond with ONLY valid JSON, no other text or formatting.
     def detect_columns_with_statistics(self, worksheet_data: Dict, sheet_name: str) -> ColumnDetectionResult:
         """Gemini-based intelligent column detection"""
 
-        # Prepare comprehensive analysis data
-        column_stats = self._analyze_column_patterns(worksheet_data)
         headers = worksheet_data.get('headers', [])
         samples = worksheet_data.get('samples', [])
 
@@ -253,7 +245,6 @@ IMPORTANT: Respond with ONLY valid JSON, no other text or formatting.
 SHEET: {sheet_name}
 HEADERS: {json.dumps(headers, indent=1)}
 SAMPLE DATA (first 6 rows): {json.dumps(samples[:6], indent=1)}
-COLUMN STATISTICS: {json.dumps(column_stats, indent=1)}
 
 INTELLIGENT ANALYSIS TASK:
 Analyze the actual content, structure, and purpose of this sheet to identify:
@@ -276,19 +267,18 @@ CRITICAL ANALYSIS PRINCIPLES:
 - Answer columns should make sense for the data collection workflow
 - Consider the logical flow: metadata → questions → responses
 
-IMPORTANT: Respond with ONLY valid JSON, no other text.
-
+RESPONSE FORMAT - Return ONLY this JSON structure:
 {{
     "question_column": "X",
     "answer_columns": ["Y", "Z"],
-    "hierarchy_column": null,
+    "hierarchy_column": "null",
     "column_purposes": {{
         "A": "specific purpose based on analysis",
         "B": "specific purpose based on analysis"
     }},
     "analysis_reasoning": "explain your column detection logic",
     "start_row": 2,
-    "confidence": "high"
+    "confidence": "high/medium/low"
 }}"""
 
         try:
@@ -297,9 +287,18 @@ IMPORTANT: Respond with ONLY valid JSON, no other text.
                 generation_config=self.generation_config
             )
 
+            # Parse the JSON response
             response_text = response.text.strip()
-            response_text = self._clean_json_response(response_text)
-            result_json = json.loads(response_text)
+
+            # Clean response
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+
+            result_json = json.loads(response_text.strip())
 
             # Print Gemini reasoning
             if 'analysis_reasoning' in result_json:
@@ -309,7 +308,7 @@ IMPORTANT: Respond with ONLY valid JSON, no other text.
 
         except Exception as e:
             print(f"    ⚠️  Gemini column detection failed: {str(e)[:50]}")
-            return self._intelligent_statistical_fallback(worksheet_data, column_stats)
+            return self._intelligent_statistical_fallback(worksheet_data)
 
     def extract_global_context(self, content_data: Dict) -> GlobalContext:
         """Gemini-based global context extraction"""
@@ -331,8 +330,7 @@ Analyze the actual content to understand:
 
 Base your analysis on ACTUAL CONTENT, not assumptions.
 
-IMPORTANT: Respond with ONLY valid JSON, no other text.
-
+RESPONSE FORMAT - Return ONLY this JSON structure:
 {{
     "document_type": "analyzed document type",
     "document_purpose": "analyzed purpose from content",
@@ -354,7 +352,7 @@ IMPORTANT: Respond with ONLY valid JSON, no other text.
         "key_terms": {{"term": "definition"}},
         "acronyms": {{"acronym": "expansion"}}
     }},
-    "evaluation_criteria": "criteria found or null",
+    "evaluation_criteria": "criteria found",
     "special_notes": ["important findings"]
 }}"""
 
@@ -364,9 +362,18 @@ IMPORTANT: Respond with ONLY valid JSON, no other text.
                 generation_config=self.generation_config
             )
 
+            # Parse the JSON response
             response_text = response.text.strip()
-            response_text = self._clean_json_response(response_text)
-            result_json = json.loads(response_text)
+
+            # Clean response
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+
+            result_json = json.loads(response_text.strip())
 
             return GlobalContext(**result_json)
 
@@ -385,7 +392,6 @@ DOCUMENT CONTEXT:
 Type: {global_context.document_type}
 Purpose: {global_context.document_purpose}
 Instructions: {global_context.filling_instructions.general}
-Answer Guidelines: {json.dumps(global_context.answer_guidelines.model_dump())}
 """
 
         prompt = f"""Generate intelligent answer filling strategy with cross-column logic.
@@ -404,8 +410,7 @@ STRATEGY REQUIREMENTS:
 4. Provide column-specific response values
 5. Consider conditional logic and empty probabilities
 
-IMPORTANT: Respond with ONLY valid JSON, no other text.
-
+RESPONSE FORMAT - Return ONLY this JSON structure:
 {{
     "distribution": {{
         "positive": 70,
@@ -434,32 +439,24 @@ IMPORTANT: Respond with ONLY valid JSON, no other text.
                 generation_config=self.generation_config
             )
 
+            # Parse the JSON response
             response_text = response.text.strip()
-            response_text = self._clean_json_response(response_text)
-            result_json = json.loads(response_text)
+
+            # Clean response
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+
+            result_json = json.loads(response_text.strip())
 
             return FillStrategy(**result_json)
 
         except Exception as e:
             print(f"    ⚠️  Gemini strategy generation failed: {str(e)[:50]}")
             return self._create_intelligent_fallback_strategy(sheet_info)
-
-    def _clean_json_response(self, response_text: str) -> str:
-        """Clean Gemini response to extract valid JSON"""
-
-        if not response_text.strip():
-            raise ValueError("Empty response")
-
-        # Remove markdown formatting
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        elif response_text.startswith("```"):
-            response_text = response_text[3:]
-
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-
-        return response_text.strip()
 
     def _intelligent_pattern_analysis(self, sheets_info: List[Dict]) -> SheetsAnalysisResult:
         """Intelligent pattern-based analysis when Gemini fails"""
@@ -513,7 +510,7 @@ IMPORTANT: Respond with ONLY valid JSON, no other text.
             )
         )
 
-    def _intelligent_statistical_fallback(self, worksheet_data: Dict, column_stats: Dict) -> ColumnDetectionResult:
+    def _intelligent_statistical_fallback(self, worksheet_data: Dict) -> ColumnDetectionResult:
         """Simple statistical fallback"""
 
         headers = worksheet_data.get('headers', [])
@@ -547,10 +544,6 @@ IMPORTANT: Respond with ONLY valid JSON, no other text.
             start_row=2,
             confidence="medium"
         )
-
-    def _analyze_column_patterns(self, worksheet_data: Dict) -> Dict[str, Any]:
-        """Simple column pattern analysis"""
-        return {}  # Simplified for compatibility
 
     def _create_enhanced_fallback_context(self) -> GlobalContext:
         """Enhanced fallback context"""

@@ -14,6 +14,8 @@ from models import (
 from claude_client import ClaudeStructuredClient
 from parsers import HierarchicalQuestionParser, MultiLineQuestionParser
 from smart_sheet_analyzer import SmartSheetAnalyzer
+from gemini_client import GeminiStructuredClient
+
 
 
 class EnhancedExcelExtractor:
@@ -23,8 +25,14 @@ class EnhancedExcelExtractor:
         self.use_llm_hierarchy = use_llm_hierarchy
         self.file_path = file_path
         self.workbook = None
-        self.claude_client = ClaudeStructuredClient()
-        self.smart_analyzer = SmartSheetAnalyzer(self.claude_client)
+        ##claude
+        # self.claude_client = ClaudeStructuredClient()
+        ##gemini
+        self.gemini_client = GeminiStructuredClient()
+        ##Claude
+        # self.smart_analyzer = SmartSheetAnalyzer(self.claude_client)
+        ##Gemini
+        self.smart_analyzer = SmartSheetAnalyzer(self.gemini_client)
         self.hierarchy_parser = HierarchicalQuestionParser() if use_llm_hierarchy else None
         self.global_context = None
         self.content_sheet_name = content_sheet_name
@@ -134,7 +142,7 @@ class EnhancedExcelExtractor:
             sheets_info.append(info)
             print(f"  📋 '{sheet_name}': {sheet.max_row} rows, {sheet.max_column} columns")
 
-        # Use LLM-based analysis
+        # Use LLM-based analysis - FIXED: Handle tuple return
         analysis_result, detected_content_sheet = self.smart_analyzer.analyze_all_sheets_with_llm(sheets_info)
 
         # Store detected content sheet for later use
@@ -145,6 +153,7 @@ class EnhancedExcelExtractor:
             print(f"  📄 '{sheet_name}': {analysis.sheet_type.value} - Questions: {analysis.contains_questions}")
 
         return analysis_result
+
 
     def _extract_global_context_from_detected_sheet(self):
         """Extract global context from LLM-detected content sheet"""
@@ -171,11 +180,15 @@ class EnhancedExcelExtractor:
         if content_sheet_to_use:
             sheet = self.workbook[content_sheet_to_use]
             content_data = self._collect_sheet_data(sheet)
-            self.global_context = self.claude_client.extract_global_context(content_data)
+            ##claude
+            # self.global_context = self.claude_client.extract_global_context(content_data)
+            ##gemini
+            self.global_context = self.gemini_client.extract_global_context(content_data)
             print(f"✅ Global context extracted successfully")
             print(f"📚 Document Type: {self.global_context.document_type}")
         else:
-            self.global_context = self.claude_client._create_enhanced_fallback_context()
+            # self.global_context = self.claude_client._create_enhanced_fallback_context()
+            self.global_context = self.gemini_client._create_enhanced_fallback_context()
             print("📚 Using fallback global context")
 
     def _extract_from_sheet_enhanced(self, sheet_name: str, analysis) -> Optional[ExtractionResult]:
@@ -190,7 +203,9 @@ class EnhancedExcelExtractor:
             'samples': self._get_samples(sheet)
         }
 
-        column_info = self.claude_client.detect_columns_with_statistics(worksheet_data, sheet_name)
+        # column_info = self.claude_client.detect_columns_with_statistics(worksheet_data, sheet_name)
+
+        column_info = self.gemini_client.detect_columns_with_statistics(worksheet_data, sheet_name)
         print(f"  📊 Question column: {column_info.question_column}")
         print(f"  📋 Answer columns: {column_info.answer_columns} ({len(column_info.answer_columns)} columns)")
         print(f"  🎯 Detection confidence: {column_info.confidence}")

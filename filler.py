@@ -12,7 +12,8 @@ from models import (
     ExtractionResult, ExtractedQuestion, GlobalContext, 
     FillStrategy, ColumnFillStrategy
 )
-from claude_client import ClaudeStructuredClient
+# from claude_client import ClaudeStructuredClient
+from gemini_client import GeminiStructuredClient
 
 
 class EnhancedExcelFiller:
@@ -21,7 +22,9 @@ class EnhancedExcelFiller:
     def __init__(self, file_path: str):
         self.file_path = file_path
         self.workbook = None
-        self.claude_client = ClaudeStructuredClient()
+        # self.claude_client = ClaudeStructuredClient()
+
+        self.gemini_client = GeminiStructuredClient()
 
     def fill_all(self, extraction_results: Dict[str, Any]) -> str:
         """Enhanced filling with intelligent logic"""
@@ -76,7 +79,9 @@ class EnhancedExcelFiller:
             'column_purposes': extraction_result.column_info.column_purposes if extraction_result.column_info else {}
         }
 
-        strategy = self.claude_client.generate_intelligent_fill_strategy(sheet_info, global_context)
+        # strategy = self.claude_client.generate_intelligent_fill_strategy(sheet_info, global_context)
+
+        strategy = self.gemini_client.generate_intelligent_fill_strategy(sheet_info, global_context)
 
         # Apply intelligent strategy
         filled_count = self._apply_intelligent_strategy(sheet, fillable_questions, strategy)

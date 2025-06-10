@@ -1,51 +1,47 @@
 """
-Clean Gemini API client - completely removed all schema references
-Uses proper model names and simple JSON prompt engineering
+Clean Gemini API client using latest Gen AI SDK with structured output
+Uses Pydantic models for type-safe responses
 """
 
 import os
-import json
-import google.generativeai as genai
 from typing import Dict, List, Any, Optional
+from google import genai
 
 from models import (
     SheetsAnalysisResult, SheetAnalysis, SheetType, DocumentOverview,
     ColumnDetectionResult, GlobalContext,
     FillingInstructions, AnswerGuidelines, FillStrategy, FillDistribution,
-    ColumnFillStrategy, SheetExtractionStrategy
+    ColumnFillStrategy, SheetExtractionStrategy,
+    SheetsAnalysisResponse, ColumnDetectionResponse, GlobalContextResponse,
+    FillStrategyResponse
 )
 
 
 class GeminiStructuredClient:
-    """Clean Gemini client with no schema references"""
+    """Clean Gemini client using structured output"""
 
     def __init__(self):
         api_key = os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable is required")
 
-        genai.configure(api_key=api_key)
-        # Use the correct model name from search results
-        self.model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
-
-        # Simple generation config
-        self.generation_config = genai.GenerationConfig(
-            temperature=0.1,
-            max_output_tokens=8192,
-            candidate_count=1
-        )
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = 'gemini-2.5-flash-preview-05-20'
+        
+        # Base generation config
+        self.base_config = {
+            'temperature': 0,
+        }
 
     def analyze_sheets_intelligently(self, sheets_info: List[Dict],
                                      global_context: Optional[GlobalContext] = None) -> SheetsAnalysisResult:
-        """LLM-based sheet analysis using Gemini"""
+        """LLM-based sheet analysis using Gemini with structured output"""
 
         print("🧠 Using Gemini LLM-based intelligent sheet analysis...")
         print("📝 Analyzing actual content patterns to classify sheets...")
 
-        # Prepare comprehensive data for LLM analysis
         analysis_data = self._prepare_sheet_analysis_data(sheets_info)
 
-        # Try Gemini analysis first
         try:
             llm_result = self._get_gemini_sheet_analysis(analysis_data, global_context)
             if llm_result:
@@ -54,12 +50,11 @@ class GeminiStructuredClient:
         except Exception as e:
             print(f"⚠️  Gemini sheet analysis failed: {str(e)[:100]}")
 
-        # Fallback to intelligent pattern analysis
         print("🔄 Using intelligent pattern-based analysis...")
         return self._intelligent_pattern_analysis(sheets_info)
 
     def _prepare_sheet_analysis_data(self, sheets_info: List[Dict]) -> Dict[str, Any]:
-        """Prepare comprehensive data for Gemini analysis"""
+        """Prepare comprehensive data for LLM analysis"""
 
         analysis_data = {
             "document_info": {
@@ -77,7 +72,6 @@ class GeminiStructuredClient:
                 "sample_content": []
             }
 
-            # Extract headers (first 8 for analysis)
             headers = sheet.get('headers', [])
             for header in headers[:8]:
                 if header and header.get('value'):
@@ -86,7 +80,6 @@ class GeminiStructuredClient:
                         "header": str(header['value'])[:50]
                     })
 
-            # Extract sample content (first 5 data rows, first 4 columns)
             sample_data = sheet.get('sample_data', [])
             if sample_data and len(sample_data) > 1:
                 for row_idx in range(1, min(6, len(sample_data))):
@@ -107,7 +100,7 @@ class GeminiStructuredClient:
 
     def _get_gemini_sheet_analysis(self, analysis_data: Dict[str, Any],
                                    global_context: Optional[GlobalContext] = None) -> Optional[SheetsAnalysisResult]:
-        """Get Gemini analysis of sheet types"""
+        """Get Gemini analysis of sheet types using structured output"""
 
         context_section = ""
         if global_context:
@@ -122,7 +115,7 @@ Purpose: {global_context.document_purpose}
 {context_section}
 
 SHEET ANALYSIS DATA:
-{json.dumps(analysis_data, indent=2)}
+{analysis_data}
 
 CLASSIFICATION TASK:
 Analyze each sheet's actual content, structure, and purpose to determine:
@@ -145,84 +138,53 @@ ANALYSIS PRINCIPLES:
 - Look at headers, sample content, and overall organization
 - Identify which sheet would serve as the instruction/context source
 
-RESPONSE FORMAT - Return ONLY this JSON structure:
-{{
-    "content_sheet_detected": "SheetName or null",
-    "classification_reasoning": "explanation of analysis approach",
-    "sheets_analysis": {{
-        "SheetName": {{
-            "sheet_type": "content_sheet or question_sheet",
-            "purpose": "specific purpose based on content analysis",
-            "contains_questions": true/false,
-            "skip_extraction": true/false,
-            "reasoning": "detailed reasoning for this classification",
-            "confidence": "high/medium/low",
-            "extraction_strategy": {{
-                "question_columns": ["A"],
-                "answer_columns": ["B", "C"],
-                "start_row": 2
-            }}
-        }}
-    }},
-    "document_overview": {{
-        "document_type": "analyzed document type",
-        "total_question_sheets": number
-    }}
-}}"""
+Provide a structured analysis with content sheet detection, classification reasoning, 
+detailed sheet analysis for each sheet, and document overview."""
 
         try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=self.generation_config
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config={
+                    **self.base_config,
+                    'response_mime_type': 'application/json',
+                    'response_schema': SheetsAnalysisResponse,
+                }
             )
 
-            # Parse the JSON response
-            response_text = response.text.strip()
+            result = response.parsed
 
-            # Clean response
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-
-            result = json.loads(response_text.strip())
-
-            # Convert to our models
             sheets_analysis = {}
-            content_sheet_name = result.get("content_sheet_detected")
+            content_sheet_name = result.content_sheet_detected
 
             print(f"🎯 Gemini detected content sheet: {content_sheet_name or 'None'}")
-            print(f"📋 Analysis approach: {result.get('classification_reasoning', 'Not provided')[:80]}...")
+            print(f"📋 Analysis approach: {result.classification_reasoning[:80]}...")
 
-            for sheet_name, analysis in result["sheets_analysis"].items():
-                sheet_type = SheetType.CONTENT_SHEET if analysis["sheet_type"] == "content_sheet" else SheetType.QUESTION_SHEET
+            for sheet_name, analysis in result.sheets_analysis.items():
+                sheet_type = SheetType.CONTENT_SHEET if analysis.sheet_type == "content_sheet" else SheetType.QUESTION_SHEET
 
-                print(f"  📄 '{sheet_name}': {analysis['sheet_type']} - {analysis['reasoning'][:60]}...")
+                print(f"  📄 '{sheet_name}': {analysis.sheet_type} - {analysis.reasoning[:60]}...")
 
-                # Create extraction strategy for question sheets
                 extraction_strategy = None
-                if sheet_type == SheetType.QUESTION_SHEET:
-                    strategy_data = analysis.get("extraction_strategy", {})
+                if sheet_type == SheetType.QUESTION_SHEET and analysis.extraction_strategy:
                     extraction_strategy = SheetExtractionStrategy(
-                        question_columns=strategy_data.get("question_columns", ["A"]),
-                        answer_columns=strategy_data.get("answer_columns", ["B", "C"]),
-                        start_row=strategy_data.get("start_row", 2)
+                        question_columns=analysis.extraction_strategy.question_columns,
+                        answer_columns=analysis.extraction_strategy.answer_columns,
+                        start_row=analysis.extraction_strategy.start_row
                     )
 
                 sheets_analysis[sheet_name] = SheetAnalysis(
                     sheet_type=sheet_type,
-                    purpose=analysis["purpose"],
-                    contains_questions=analysis["contains_questions"],
-                    skip_extraction=analysis["skip_extraction"],
+                    purpose=analysis.purpose,
+                    contains_questions=analysis.contains_questions,
+                    skip_extraction=analysis.skip_extraction,
                     extraction_strategy=extraction_strategy,
-                    confidence=analysis["confidence"]
+                    confidence=analysis.confidence
                 )
 
             document_overview = DocumentOverview(
-                document_type=result["document_overview"]["document_type"],
-                total_question_sheets=result["document_overview"]["total_question_sheets"]
+                document_type=result.document_overview.document_type,
+                total_question_sheets=result.document_overview.total_question_sheets
             )
 
             return SheetsAnalysisResult(
@@ -235,7 +197,7 @@ RESPONSE FORMAT - Return ONLY this JSON structure:
             return None
 
     def detect_columns_with_statistics(self, worksheet_data: Dict, sheet_name: str) -> ColumnDetectionResult:
-        """Gemini-based intelligent column detection"""
+        """Gemini-based intelligent column detection with structured output"""
 
         headers = worksheet_data.get('headers', [])
         samples = worksheet_data.get('samples', [])
@@ -243,8 +205,8 @@ RESPONSE FORMAT - Return ONLY this JSON structure:
         prompt = f"""Analyze this Excel sheet to intelligently detect question and answer columns.
 
 SHEET: {sheet_name}
-HEADERS: {json.dumps(headers, indent=1)}
-SAMPLE DATA (first 6 rows): {json.dumps(samples[:6], indent=1)}
+HEADERS: {headers}
+SAMPLE DATA (first 6 rows): {samples[:6]}
 
 INTELLIGENT ANALYSIS TASK:
 Analyze the actual content, structure, and purpose of this sheet to identify:
@@ -267,56 +229,44 @@ CRITICAL ANALYSIS PRINCIPLES:
 - Answer columns should make sense for the data collection workflow
 - Consider the logical flow: metadata → questions → responses
 
-RESPONSE FORMAT - Return ONLY this JSON structure:
-{{
-    "question_column": "X",
-    "answer_columns": ["Y", "Z"],
-    "hierarchy_column": "null",
-    "column_purposes": {{
-        "A": "specific purpose based on analysis",
-        "B": "specific purpose based on analysis"
-    }},
-    "analysis_reasoning": "explain your column detection logic",
-    "start_row": 2,
-    "confidence": "high/medium/low"
-}}"""
+Provide structured column detection with question column, answer columns, hierarchy column if any,
+column purposes, analysis reasoning, start row, and confidence level."""
 
         try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=self.generation_config
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config={
+                    **self.base_config,
+                    'response_mime_type': 'application/json',
+                    'response_schema': ColumnDetectionResponse,
+                }
             )
 
-            # Parse the JSON response
-            response_text = response.text.strip()
+            result = response.parsed
 
-            # Clean response
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
+            print(f"    🧠 Gemini Column Analysis: {result.analysis_reasoning}")
 
-            result_json = json.loads(response_text.strip())
-
-            # Print Gemini reasoning
-            if 'analysis_reasoning' in result_json:
-                print(f"    🧠 Gemini Column Analysis: {result_json['analysis_reasoning']}")
-
-            return ColumnDetectionResult(**result_json)
+            return ColumnDetectionResult(
+                question_column=result.question_column,
+                answer_columns=result.answer_columns,
+                hierarchy_column=result.hierarchy_column,
+                column_purposes=result.column_purposes,
+                start_row=result.start_row,
+                confidence=result.confidence
+            )
 
         except Exception as e:
             print(f"    ⚠️  Gemini column detection failed: {str(e)[:50]}")
             return self._intelligent_statistical_fallback(worksheet_data)
 
     def extract_global_context(self, content_data: Dict) -> GlobalContext:
-        """Gemini-based global context extraction"""
+        """Gemini-based global context extraction with structured output"""
 
         prompt = f"""Analyze this content/instruction sheet to extract comprehensive global context.
 
 CONTENT SHEET DATA:
-{json.dumps(content_data, indent=2)}
+{content_data}
 
 COMPREHENSIVE ANALYSIS TASKS:
 Analyze the actual content to understand:
@@ -330,52 +280,43 @@ Analyze the actual content to understand:
 
 Base your analysis on ACTUAL CONTENT, not assumptions.
 
-RESPONSE FORMAT - Return ONLY this JSON structure:
-{{
-    "document_type": "analyzed document type",
-    "document_purpose": "analyzed purpose from content",
-    "filling_instructions": {{
-        "general": "extracted instructions",
-        "by_section": {{
-            "section_name": "specific instructions"
-        }}
-    }},
-    "sheet_relationships": {{
-        "sheet_name": "analyzed relationship"
-    }},
-    "answer_guidelines": {{
-        "compliance_responses": ["extracted response types"],
-        "detail_requirements": "detail requirements found",
-        "evidence_requirements": "evidence requirements found"
-    }},
-    "terminology": {{
-        "key_terms": {{"term": "definition"}},
-        "acronyms": {{"acronym": "expansion"}}
-    }},
-    "evaluation_criteria": "criteria found",
-    "special_notes": ["important findings"]
-}}"""
+Provide structured context with document type, purpose, filling instructions,
+sheet relationships, answer guidelines, terminology, evaluation criteria, and special notes."""
 
         try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=self.generation_config
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config={
+                    **self.base_config,
+                    'response_mime_type': 'application/json',
+                    'response_schema': GlobalContextResponse,
+                }
             )
 
-            # Parse the JSON response
-            response_text = response.text.strip()
+            result = response.parsed
 
-            # Clean response
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
+            filling_instructions = FillingInstructions(
+                general=result.filling_instructions.get('general', ''),
+                by_section=result.filling_instructions.get('by_section', {})
+            )
 
-            result_json = json.loads(response_text.strip())
+            answer_guidelines = AnswerGuidelines(
+                compliance_responses=result.answer_guidelines.get('compliance_responses', []),
+                detail_requirements=result.answer_guidelines.get('detail_requirements', ''),
+                evidence_requirements=result.answer_guidelines.get('evidence_requirements', '')
+            )
 
-            return GlobalContext(**result_json)
+            return GlobalContext(
+                document_type=result.document_type,
+                document_purpose=result.document_purpose,
+                filling_instructions=filling_instructions,
+                sheet_relationships=result.sheet_relationships,
+                answer_guidelines=answer_guidelines,
+                terminology=result.terminology,
+                evaluation_criteria=result.evaluation_criteria,
+                special_notes=result.special_notes
+            )
 
         except Exception as e:
             print(f"    ⚠️  Gemini context extraction failed: {str(e)[:50]}")
@@ -383,7 +324,7 @@ RESPONSE FORMAT - Return ONLY this JSON structure:
 
     def generate_intelligent_fill_strategy(self, sheet_info: Dict,
                                            global_context: Optional[GlobalContext] = None) -> FillStrategy:
-        """Gemini-based intelligent filling strategy generation"""
+        """Gemini-based intelligent filling strategy generation with structured output"""
 
         context_section = ""
         if global_context:
@@ -401,7 +342,7 @@ SHEET INFORMATION:
 - Sheet Name: {sheet_info['sheet_name']}
 - Fillable Questions: {sheet_info.get('fillable_questions', 0)}
 - Answer Columns: {sheet_info['answer_columns']}
-- Column Purposes: {json.dumps(sheet_info.get('column_purposes', {}))}
+- Column Purposes: {sheet_info.get('column_purposes', {})}
 
 STRATEGY REQUIREMENTS:
 1. Analyze column purposes to understand relationships
@@ -410,49 +351,43 @@ STRATEGY REQUIREMENTS:
 4. Provide column-specific response values
 5. Consider conditional logic and empty probabilities
 
-RESPONSE FORMAT - Return ONLY this JSON structure:
-{{
-    "distribution": {{
-        "positive": 70,
-        "negative": 15,
-        "partial": 15
-    }},
-    "column_strategies": {{
-        "C": {{
-            "purpose": "analyzed purpose",
-            "positive_values": ["realistic values"],
-            "negative_values": ["realistic values"],
-            "partial_values": ["realistic values"],
-            "conditional_logic": "logic description",
-            "empty_probability": 0.1
-        }}
-    }},
-    "cross_column_rules": [
-        "logical consistency rules",
-        "conditional filling rules"
-    ]
-}}"""
+Provide structured strategy with distribution percentages, column strategies, and cross-column rules."""
 
         try:
-            response = self.model.generate_content(
-                prompt,
-                generation_config=self.generation_config
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config={
+                    **self.base_config,
+                    'response_mime_type': 'application/json',
+                    'response_schema': FillStrategyResponse,
+                }
             )
 
-            # Parse the JSON response
-            response_text = response.text.strip()
+            result = response.parsed
 
-            # Clean response
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
+            distribution = FillDistribution(
+                positive=result.distribution.get('positive', 70),
+                negative=result.distribution.get('negative', 15),
+                partial=result.distribution.get('partial', 15)
+            )
 
-            result_json = json.loads(response_text.strip())
+            column_strategies = {}
+            for col, strategy in result.column_strategies.items():
+                column_strategies[col] = ColumnFillStrategy(
+                    purpose=strategy.get('purpose', ''),
+                    positive_values=strategy.get('positive_values', []),
+                    negative_values=strategy.get('negative_values', []),
+                    partial_values=strategy.get('partial_values', []),
+                    conditional_logic=strategy.get('conditional_logic', ''),
+                    empty_probability=strategy.get('empty_probability', 0.1)
+                )
 
-            return FillStrategy(**result_json)
+            return FillStrategy(
+                distribution=distribution,
+                column_strategies=column_strategies,
+                cross_column_rules=result.cross_column_rules
+            )
 
         except Exception as e:
             print(f"    ⚠️  Gemini strategy generation failed: {str(e)[:50]}")
@@ -472,7 +407,6 @@ RESPONSE FORMAT - Return ONLY this JSON structure:
 
             print(f"  🔍 Analyzing '{sheet_name}': {rows}r x {columns}c")
 
-            # Simple heuristic: larger sheets are likely question sheets
             if rows > 20:
                 answer_columns = [chr(ord('B') + i) for i in range(min(columns - 1, 5))]
 
@@ -524,7 +458,6 @@ RESPONSE FORMAT - Return ONLY this JSON structure:
                 confidence="low"
             )
 
-        # Simple heuristic: first column is questions, rest are answers
         question_col = 'A'
         answer_cols = [chr(ord('A') + i + 1) for i in range(min(len(headers) - 1, 5))]
 

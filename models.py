@@ -197,3 +197,61 @@ class ExtractionResult(BaseModel):
     statistics: Dict[str, Any]
     hierarchy_stats: Optional[HierarchyStats] = None
     column_info: Optional[ColumnDetectionResult] = None
+
+class ExtractionStrategyResponse(BaseModel):
+    """Extraction strategy for question sheets"""
+    question_columns: List[str] = Field(description="Columns containing questions")
+    answer_columns: List[str] = Field(description="Columns for answers")
+    start_row: int = Field(default=2, description="Starting row for data extraction")
+
+class SheetAnalysisResponse(BaseModel):
+    """Analysis result for a single sheet"""
+    sheet_type: str = Field(description="Either 'content_sheet' or 'question_sheet'")
+    purpose: str = Field(description="Specific purpose based on content analysis")
+    contains_questions: bool = Field(description="Whether sheet contains questions")
+    skip_extraction: bool = Field(description="Whether to skip extraction for this sheet")
+    reasoning: str = Field(description="Detailed reasoning for classification")
+    confidence: str = Field(description="Confidence level: high/medium/low")
+    extraction_strategy: Optional[ExtractionStrategyResponse] = None
+
+class DocumentOverviewResponse(BaseModel):
+    """Overview of the entire document"""
+    document_type: str = Field(description="Analyzed document type")
+    total_question_sheets: int = Field(description="Number of question sheets")
+
+
+class SheetsAnalysisResponse(BaseModel):
+    """Complete sheet analysis response"""
+    content_sheet_detected: Optional[str] = Field(description="Name of content sheet if detected")
+    classification_reasoning: str = Field(description="Explanation of analysis approach")
+    sheets_analysis: Dict[str, SheetAnalysisResponse] = Field(description="Analysis for each sheet")
+    document_overview: DocumentOverviewResponse
+
+
+class ColumnDetectionResponse(BaseModel):
+    """Column detection analysis response"""
+    question_column: str = Field(description="Column containing questions")
+    answer_columns: List[str] = Field(description="Columns for answers")
+    hierarchy_column: Optional[str] = Field(default=None, description="Column with hierarchy if any")
+    column_purposes: Dict[str, str] = Field(description="Purpose of each column")
+    analysis_reasoning: str = Field(description="Explanation of column detection logic")
+    start_row: int = Field(default=2, description="Starting row for data")
+    confidence: str = Field(description="Confidence level: high/medium/low")
+
+
+class GlobalContextResponse(BaseModel):
+    """Global context extraction response"""
+    document_type: str = Field(description="Type of document")
+    document_purpose: str = Field(description="Purpose of document")
+    filling_instructions: Dict[str, Any] = Field(description="Instructions for filling")
+    sheet_relationships: Dict[str, str] = Field(description="How sheets relate to each other")
+    answer_guidelines: Dict[str, Any] = Field(description="Guidelines for answers")
+    terminology: Dict[str, Dict[str, str]] = Field(description="Key terms and acronyms")
+    evaluation_criteria: str = Field(description="How responses will be evaluated")
+    special_notes: List[str] = Field(description="Important findings")
+
+class FillStrategyResponse(BaseModel):
+    """Fill strategy generation response"""
+    distribution: Dict[str, int] = Field(description="Response distribution percentages")
+    column_strategies: Dict[str, Dict[str, Any]] = Field(description="Strategy for each column")
+    cross_column_rules: List[str] = Field(description="Rules for cross-column consistency")

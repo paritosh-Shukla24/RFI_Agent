@@ -19,12 +19,12 @@ from gemini_client import GeminiStructuredClient
 class EnhancedExcelFiller:
     """Enhanced filler with intelligent cross-column logic"""
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, force_fill_all: bool = True):
         self.file_path = file_path
         self.workbook = None
         # self.claude_client = ClaudeStructuredClient()
-
         self.gemini_client = GeminiStructuredClient()
+        self.force_fill_all = force_fill_all  # New parameter to force filling all cells
 
     def fill_all(self, extraction_results: Dict[str, Any]) -> str:
         """Enhanced filling with intelligent logic"""
@@ -80,7 +80,6 @@ class EnhancedExcelFiller:
         }
 
         # strategy = self.claude_client.generate_intelligent_fill_strategy(sheet_info, global_context)
-
         strategy = self.gemini_client.generate_intelligent_fill_strategy(sheet_info, global_context)
 
         # Apply intelligent strategy
@@ -149,21 +148,25 @@ class EnhancedExcelFiller:
     def _get_intelligent_value_with_logic(self, col_letter: str, col_strategy: ColumnFillStrategy,
                                         response_type: str, row_values: Dict,
                                         cross_rules: List[str], question: ExtractedQuestion) -> str:
-        """Get value with intelligent cross-column logic"""
+        """Get value with intelligent cross-column logic - ENSURE ALL CELLS ARE FILLED"""
 
-        # Check empty probability
-        if random.random() < col_strategy.empty_probability:
+        # CHANGED: Skip empty probability check if force_fill_all is True
+        if not self.force_fill_all and random.random() < col_strategy.empty_probability:
             return ''
 
         # Apply cross-column rules
         for rule in cross_rules:
             if self._should_apply_cross_rule(rule, row_values, col_letter, response_type):
-                return self._apply_cross_rule(rule, col_letter, response_type)
+                cross_value = self._apply_cross_rule(rule, col_letter, response_type)
+                if cross_value:  # Only return if a value was actually generated
+                    return cross_value
 
         # Apply conditional logic from strategy
         conditional_logic = col_strategy.conditional_logic
         if conditional_logic and self._should_apply_conditional_logic(conditional_logic, response_type, row_values):
-            return self._apply_conditional_logic(conditional_logic, col_letter, response_type, col_strategy)
+            cond_value = self._apply_conditional_logic(conditional_logic, col_letter, response_type, col_strategy)
+            if cond_value:  # Only return if a value was actually generated
+                return cond_value
 
         # Get base values based on response type
         if response_type == 'positive':
@@ -173,7 +176,17 @@ class EnhancedExcelFiller:
         else:
             values = col_strategy.partial_values
 
-        return random.choice(values) if values else ''
+        # IMPROVED: Ensure we have at least one value to return
+        if not values:
+            # Fallback values based on response type
+            if response_type == 'positive':
+                return "Yes" if "compliance" in col_letter.lower() else "Compliant"
+            elif response_type == 'negative':
+                return "No" if "compliance" in col_letter.lower() else "Not Supported"
+            else:
+                return "Partial"
+
+        return random.choice(values)
 
     def _should_apply_cross_rule(self, rule: str, row_values: Dict, col_letter: str, response_type: str) -> bool:
         """Check if cross-column rule should apply"""
@@ -232,11 +245,11 @@ class EnhancedExcelFiller:
         if 'mark' in logic_lower and 'only' in logic_lower:
             # Mark this column only for this response type
             if response_type == 'positive':
-                return random.choice(col_strategy.positive_values) if col_strategy.positive_values else ''
+                return random.choice(col_strategy.positive_values) if col_strategy.positive_values else 'Yes'
             elif response_type == 'negative':
-                return random.choice(col_strategy.negative_values) if col_strategy.negative_values else ''
+                return random.choice(col_strategy.negative_values) if col_strategy.negative_values else 'No'
             else:
-                return random.choice(col_strategy.partial_values) if col_strategy.partial_values else ''
+                return random.choice(col_strategy.partial_values) if col_strategy.partial_values else 'Partial'
 
         return ''
 

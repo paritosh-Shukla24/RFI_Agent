@@ -30,7 +30,7 @@ class GeminiStructuredClient:
 
         genai.configure(api_key=api_key)
         # Use the model that works best for structured output
-        self.model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
+        self.model = genai.GenerativeModel('gemini-2.5-pro-preview-06-05')
         self.detected_content_sheet = None
 
         # Configure generation settings for structured output
